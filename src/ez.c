@@ -6,12 +6,12 @@
 #include <string.h>
 
 typedef enum {
-    LogNone,
-    LogError,
-    LogWarning,
-    LogInfo,
-    LogDebug,
-    LogTrace
+    LOG_LEVEL_NONE,
+    LOG_LEVEL_ERROR,
+    LOG_LEVEL_WARNING,
+    LOG_LEVEL_INFO,
+    LOG_LEVEL_DEBUG,
+    LOG_LEVEL_TRACE
 } LogLevel;
 
 typedef struct {
@@ -21,7 +21,7 @@ typedef struct {
 
 Log __ez_log;
 
-void Log_cleanup() { fclose(__ez_log.out); }
+void Log_cleanup(void) { fclose(__ez_log.out); }
 
 int Log_initialize(LogLevel level, FILE *out) {
     __ez_log = (Log){.level = level, .out = out};
@@ -29,38 +29,47 @@ int Log_initialize(LogLevel level, FILE *out) {
     return 0;
 }
 
-#define LOG_FATAL(input)                                                       \
-    if (__ez_log.level >= LogError)                                            \
-        fprintf(__ez_log.out, "[FATAL ERROR] %s\n", input);                    \
-    exit(1);
-#define LOG_ERROR(input)                                                       \
-    if (__ez_log.level >= LogError)                                            \
-        fprintf(__ez_log.out, "[ERROR] %s\n", input);
-#define LOG_PERROR(input)                                                      \
-    if (__ez_log.level >= LogError)                                            \
-        fprintf(__ez_log.out, "[ERROR] %s: %s\n", input, strerror(errno));
-#define LOG_FATAL_PERROR(input)                                                \
-    if (__ez_log.level >= LogError)                                            \
-        fprintf(__ez_log.out, "[FATAL ERROR] %s: %s\n", input,                 \
+#define LOG_FATAL(input, ...)                                                  \
+    if (__ez_log.level >= LOG_LEVEL_ERROR)                                     \
+        fprintf(__ez_log.out,                                                  \
+                "[FATAL ERROR] " input "\n" __VA_OPT__(, ) __VA_ARGS__);       \
+    exit(EXIT_FAILURE);
+#define LOG_ERROR(input, ...)                                                  \
+    if (__ez_log.level >= LOG_LEVEL_ERROR)                                     \
+        fprintf(__ez_log.out, "[ERROR] " input "\n" __VA_OPT__(, ) __VA_ARGS__);
+#define LOG_PERROR(input, ...)                                                 \
+    if (__ez_log.level >= LOG_LEVEL_ERROR)                                     \
+        fprintf(__ez_log.out,                                                  \
+                "[ERROR] " input ": %s\n" __VA_OPT__(, ) __VA_ARGS__,          \
+                strerror(errno));
+#define LOG_FATAL_PERROR(input, ...)                                           \
+    if (__ez_log.level >= LOG_LEVEL_ERROR)                                     \
+        fprintf(__ez_log.out,                                                  \
+                "[FATAL ERROR] " input "%s\n" __VA_OPT__(, ) __VA_ARGS__,      \
                 strerror(errno));                                              \
-    exit(1);
-#define LOG_WARNING(input)                                                     \
-    if (__ez_log.level >= LogWarning)                                          \
-        fprintf(__ez_log.out, "[WARNING] %s\n", input);
-#define LOG_INFO(input)                                                        \
-    if (__ez_log.level >= LogInfo)                                             \
-        fprintf(__ez_log.out, "[INFO] %s\n", input);
-#define LOG_DEBUG(input)                                                       \
-    if (__ez_log.level >= LogDebug)                                            \
-        fprintf(__ez_log.out, "[DEBUG] %s\n", input);
-#define LOG_TRACE(input)                                                       \
-    if (__ez_log.level >= LogTrace)                                            \
-        fprintf(__ez_log.out, "[TRACE] %s\n", input);
+    exit(EXIT_FAILURE);
+#define LOG_WARNING(input, ...)                                                \
+    if (__ez_log.level >= LOG_LEVEL_WARNING)                                   \
+        fprintf(__ez_log.out,                                                  \
+                "[WARNING] " input "\n" __VA_OPT__(, ) __VA_ARGS__);
+#define LOG_INFO(input, ...)                                                   \
+    if (__ez_log.level >= LOG_LEVEL_INFO)                                      \
+        fprintf(__ez_log.out, "[INFO] " input "\n" __VA_OPT__(, ) __VA_ARGS__);
+#define LOG_DEBUG(input, ...)                                                  \
+    if (__ez_log.level >= LOG_LEVEL_DEBUG)                                     \
+        fprintf(__ez_log.out, "[DEBUG] " input "\n" __VA_OPT__(, ) __VA_ARGS__);
 
-#define BAIL(input)                                                            \
-    if (__ez_log.level >= LogError)                                            \
-        fprintf(__ez_log.out, "[ERROR] %s\n", input);                          \
-    exit(1);
+#define BAIL(input, ...)                                                       \
+    if (__ez_log.level >= LOG_LEVEL_ERROR)                                     \
+        fprintf(__ez_log.out,                                                  \
+                "[ERROR] " input "\n" __VA_OPT__(, ) __VA_ARGS__);             \
+    return EXIT_FAILURE;
+#define BAIL_PERROR(input, ...)                                                \
+    if (__ez_log.level >= LOG_LEVEL_ERROR)                                     \
+        fprintf(__ez_log.out,                                                  \
+                "[ERROR] " input "%s\n" __VA_OPT__(, ) __VA_ARGS__,            \
+                strerror(errno));                                              \
+    return EXIT_FAILURE;
 
 typedef struct {
     void *memory;
@@ -69,21 +78,19 @@ typedef struct {
 } Arena;
 
 Arena Arena_new(size_t capacity) {
-    LOG_TRACE("Arena_new()");
     void *memory = malloc(capacity);
     memset(memory, 0, capacity);
     return (Arena){.memory = memory, .capacity = capacity, .next_offset = 0};
 }
 
 void *Arena_allocate(Arena *arena, size_t requested_amount) {
-    LOG_TRACE("Arena_allocate()");
     if (!arena->memory) {
         LOG_ERROR("arena has already been freed");
         raise(SIGTRAP);
         return NULL;
     }
 
-    void *allocated = arena->memory + arena->next_offset;
+    void *allocated = (char *)arena->memory + arena->next_offset;
     arena->next_offset += requested_amount;
 
     if (arena->next_offset > arena->capacity) {
@@ -96,7 +103,6 @@ void *Arena_allocate(Arena *arena, size_t requested_amount) {
 }
 
 void Arena_free(Arena *arena) {
-    LOG_TRACE("Arena_free()");
     free(arena->memory);
     arena->memory = NULL;
 }

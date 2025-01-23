@@ -64,23 +64,33 @@ case $subcommand in
 
         output="./target/$( basename -- "$(dirname -- "$(readlink -f -- "$0")")" )$1"
 
-        IFS=' ' clang $extras -std=gnu99 -Wall -Werror src/main.c -o $output
+        IFS=' ' clang $extras -std=gnu23 -Wpedantic -Wall -Werror src/main.c -o $output
+        clang_result=$?
 
         if [ ! -t 1 ]; then
             echo -n $output
         fi
+
+        exit $clang_result
     ;;
     run)
-        $(./ez.sh build $1)
+        output=$(./ez.sh build $1)
+
+        if [ $? -eq 0 ]; then
+            $output
+        fi
     ;;
     debug)
         output=$(./ez.sh build gdb)
-        valgrind --vgdb=yes --vgdb-error=0 --leak-check=yes --tool=memcheck --num-callers=16 --leak-resolution=high --track-origins=yes $output &
-        valgrind_pid=$!
-        gdb -ex "target remote | vgdb" $output
+        
+        if [ $? -eq 0 ]; then
+            valgrind --vgdb=yes --vgdb-error=0 --leak-check=yes --tool=memcheck --num-callers=16 --leak-resolution=high --track-origins=yes $output &
+            valgrind_pid=$!
+            gdb -x gdbinit $output
 
-        if [ -d "/proc/$valgrind_pid" ]; then
-            kill -KILL $valgrind_pid
+            if [ -d "/proc/$valgrind_pid" ]; then
+                kill -KILL $valgrind_pid
+            fi
         fi
     ;;
     clean)

@@ -1,12 +1,21 @@
 #include "ez.c"
+#include "http.c"
 #include "server.c"
 #include "sys/socket.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <regex.h>
+#include <stdlib.h>
 #include <unistd.h>
 
-int main() {
-    Log_initialize(LogDebug, stderr);
+ROUTE(hello, {
+    response.status = 200;
+    response.headers = HEADERS(1, {{"Content-Type", "text/html"}});
+    response.body = "<b>Hello</b>";
+})
+
+int main(void) {
+    Log_initialize(LOG_LEVEL_DEBUG, stderr);
     int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (sock_fd == -1) {
         LOG_FATAL_PERROR("failed to create socket");
@@ -16,7 +25,10 @@ int main() {
         -1)
         LOG_PERROR("failed to set socket reuse adress");
 
-    if (start_server(sock_fd) == -1) {
+    if (start_server(sock_fd,
+                     &(Routes){.routes = (Route[]){{METHOD_GET, "/hello", 0,
+                                                    Route_hello}},
+                               .routes_len = 2}) == -1) {
         LOG_WARNING("shutting down due to previous error(s)");
     }
 
@@ -24,5 +36,5 @@ int main() {
         LOG_FATAL_PERROR("failed to close socket");
     }
 
-    return 0;
+    return EXIT_SUCCESS;
 }

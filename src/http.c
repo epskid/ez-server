@@ -19,19 +19,18 @@ typedef struct {
 } Headers;
 
 Header *Headers_get(Headers *headers, char *key) {
-    LOG_TRACE("Headers_get()");
     for (size_t i = 0; i < headers->headers_len; i++) {
         if (strcasecmp(headers->headers[i].key, key)) {
             return &headers->headers[i];
         }
     }
 
-    LOG_DEBUG("header not found");
+    LOG_DEBUG("header not found: %s", key);
 
     return NULL;
 }
 
-typedef enum { REQUEST_GET, REQUEST_POST, REQUEST_PUT } RequestType;
+typedef enum { METHOD_GET, METHOD_POST, METHOD_PUT } Method;
 
 #define QUERY_MAX 16
 
@@ -142,14 +141,13 @@ Url Url_parse(Arena *arena, char *url_data) {
 
 typedef struct {
     char *raw_request;
-    RequestType request_type;
+    Method method;
     Headers headers;
     Url url;
     char *body;
 } Request;
 
 Request Request_parse(Arena *request_arena, char *raw_request) {
-    LOG_TRACE("Request_parse()");
     Request request;
     request.raw_request = raw_request;
 
@@ -158,16 +156,15 @@ Request Request_parse(Arena *request_arena, char *raw_request) {
 
     char *token = strtok(line, " ");
     if (strcmp(token, "GET") == 0) {
-        request.request_type = REQUEST_GET;
+        request.method = METHOD_GET;
     } else if (strcmp(token, "POST") == 0) {
-        request.request_type = REQUEST_POST;
+        request.method = METHOD_POST;
     } else if (strcmp(token, "PUT") == 0) {
-        request.request_type = REQUEST_PUT;
+        request.method = METHOD_PUT;
     } else {
-        request.request_type = REQUEST_GET;
-        char message[] = "not a supported request type (using GET instead): ";
-        strcat(message, token);
-        LOG_WARNING(message);
+        request.method = METHOD_GET;
+        LOG_WARNING("not a supported message type: %s (using GET instead)",
+                    token);
     }
     request.url = Url_parse(request_arena, strtok(NULL, " "));
 
@@ -216,6 +213,8 @@ char *Response_serialize(Arena *arena, Response *response) {
         response->body = "";
     }
     sprintf(response_data + strlen(response_data), "\r\n%s", response->body);
+
+    LOG_DEBUG("RESPONSE:\n========\n%s\n========", response_data);
 
     return response_data;
 }
