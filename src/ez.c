@@ -39,9 +39,13 @@ int Log_initialize(LogLevel level, FILE *out) {
 }
 
 #define lfprintf(...)                                                          \
-    pthread_mutex_lock(&__ez_log_mut);                                         \
-    fprintf(__VA_ARGS__);                                                      \
-    pthread_mutex_unlock(&__ez_log_mut);
+    {                                                                          \
+        int __ez_prev_errno = errno;                                           \
+        pthread_mutex_lock(&__ez_log_mut);                                     \
+        errno = __ez_prev_errno;                                               \
+        fprintf(__VA_ARGS__);                                                  \
+        pthread_mutex_unlock(&__ez_log_mut);                                   \
+    }
 
 #define LOG_FATAL(input, ...)                                                  \
     if (__ez_log.level >= LOG_LEVEL_ERROR)                                     \

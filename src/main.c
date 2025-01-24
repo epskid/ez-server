@@ -10,7 +10,7 @@
 
 ROUTE(hello, {
     response.status = 200;
-    response.headers = HEADERS(1, {{"Content-Type", "text/html"}});
+    response.headers = HEADERS({{"Content-Type", "text/html"}});
     response.body = "<b>Hello</b>";
 })
 
@@ -24,7 +24,7 @@ int main(void) {
 
     if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) ==
         -1)
-        LOG_PERROR("failed to set socket reuse adress");
+        LOG_PERROR("failed to set socket reuse adress, %d", errno);
 
     struct sockaddr_in bind_address = {
         .sin_family = AF_INET,
@@ -39,10 +39,10 @@ int main(void) {
         BAIL_PERROR("failed to listen to socket");
     }
 
-    if (start_server(sock_fd,
-                     &(Routes){.routes = (Route[]){{METHOD_GET, "/hello", 0,
-                                                    Route_hello}},
-                               .routes_len = 2}) == -1) {
+    Routes routes = ROUTES({{METHOD_GET, "/hello", 0, Route_hello},
+                            {METHOD_GET, "/hello2", 0, Route_hello}});
+
+    if (start_server(sock_fd, &routes) == -1) {
         LOG_WARNING("shutting down due to previous error(s)");
     }
 

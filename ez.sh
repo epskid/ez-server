@@ -48,6 +48,10 @@ case $subcommand in
                 set -- "-release"
                 extras="-O3 -DEZ_RELEASE"
             ;;
+            release-gdb)
+                set -- "-release-gdb"
+                extras="-ggdb -O3 -DEZ_RELEASE"
+            ;;
             release-stripped)
                 set -- "-release-stripped"
                 extras="-O3 -Wl,-s -DEZ_RELEASE -DEZ_STRIPPED"
@@ -81,7 +85,7 @@ case $subcommand in
         fi
     ;;
     debug)
-        output=$(./ez.sh build gdb)
+        output=$(./ez.sh build "${1:-gdb}")
         
         if [ $? -eq 0 ]; then
             valgrind --vgdb=yes --vgdb-error=0 --leak-check=yes --tool=memcheck --num-callers=16 --leak-resolution=high --track-origins=yes $output &

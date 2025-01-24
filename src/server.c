@@ -19,8 +19,16 @@ typedef char *(*RouteFunction)(Arena *, Request *, regmatch_t *);
         __VA_ARGS__                                                            \
         return Response_serialize(arena, &response);                           \
     }
-#define HEADERS(len, ...)                                                      \
-    (Headers) { .headers = (Header[])__VA_ARGS__, .headers_len = len }
+#define HEADERS(...)                                                           \
+    (Headers) {                                                                \
+        .headers = (Header[])__VA_ARGS__,                                      \
+        .headers_len = sizeof((Header[])__VA_ARGS__) / sizeof(Header)          \
+    }
+#define ROUTES(...)                                                            \
+    (Routes) {                                                                 \
+        .routes = (Route[])__VA_ARGS__,                                        \
+        .routes_len = sizeof((Route[])__VA_ARGS__) / sizeof(Route)             \
+    }
 
 typedef struct {
     Method method;
