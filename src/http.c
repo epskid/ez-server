@@ -154,7 +154,8 @@ Request Request_parse(Arena *request_arena, char *raw_request) {
     char *line_save;
     char *line = strtok_r(raw_request, "\r", &line_save);
 
-    char *token = strtok(line, " ");
+    char *token_save;
+    char *token = strtok_r(line, " ", &token_save);
     if (strcmp(token, "GET") == 0) {
         request.method = METHOD_GET;
     } else if (strcmp(token, "POST") == 0) {
@@ -166,20 +167,22 @@ Request Request_parse(Arena *request_arena, char *raw_request) {
         LOG_WARNING("not a supported message type: %s (using GET instead)",
                     token);
     }
-    request.url = Url_parse(request_arena, strtok(NULL, " "));
+    request.url = Url_parse(request_arena, strtok_r(NULL, " ", &token_save));
 
     request.headers.headers =
         Arena_allocate(request_arena, sizeof(Header) * HEADER_MAX);
     request.headers.headers_len = 0;
     while ((line = strtok_r(NULL, "\r", &line_save))) {
+        char *header_save;
+
         if (strcmp(line, "\n") == 0) {
             break;
         }
         line += 1;
 
         Header header;
-        header.key = strtok(line, ":");
-        header.value = strtok(NULL, ":");
+        header.key = strtok_r(line, ":", &header_save);
+        header.value = strtok_r(NULL, ":", &header_save);
 
         while (isspace(*header.value))
             header.value++;
@@ -221,7 +224,7 @@ char *Response_serialize(Arena *arena, Response *response) {
 
 char *Response_new_server_message(Arena *arena, uint16_t status,
                                   char *message) {
-    Response resp = (Response){
+    Response resp = {
         .status = status,
         .headers =
             (Headers){.headers = (Header[]){{"Content-Type", "text/html"}},

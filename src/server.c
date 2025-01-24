@@ -2,7 +2,11 @@
 #include "ez.c"
 #include "http.c"
 #include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <regex.h>
+#include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -74,65 +78,103 @@ int Routes_call(Arena *arena, Routes *routes, Request *req, char **response) {
     return NOT_FOUND;
 }
 
-int start_server(int sock_fd, Routes *routes) {
-    struct sockaddr_in bind_address = (struct sockaddr_in){
-        .sin_family = AF_INET,
-        .sin_port = htons(8000),
-        .sin_addr = (struct in_addr){.s_addr = htonl(INADDR_LOOPBACK)}};
-    if (bind(sock_fd, (struct sockaddr *)&bind_address, sizeof(bind_address)) ==
-        -1) {
-        LOG_FATAL_PERROR("failed to bind to socket");
-    }
-    LOG_DEBUG("bound socket");
+typedef struct {
+    Routes *routes;
+    int peer_fd;
+} ServerTaskParams;
 
-    if (listen(sock_fd, 16) == -1) {
-        BAIL_PERROR("failed to listen to socket");
+void server_task(void *params) {
+    ServerTaskParams *st_params = params;
+    Routes *routes = st_params->routes;
+    int peer_fd = st_params->peer_fd;
+
+    Arena request_arena = Arena_new(8192);
+    char *request_data = Arena_allocate(&request_arena, 1024);
+    read(peer_fd, request_data, 1024);
+    LOG_DEBUG("REQUEST:\n========\n%s\n========", request_data);
+    if (request_data[1023] != 0) {
+        LOG_WARNING("over 1kb of data in request, squashing it");
+
+        char *too_long = Response_new_server_message(
+            &request_arena, 413,
+            "your request was too chunky. try an emulsifier.");
+        write(peer_fd, too_long, strlen(too_long));
+    } else {
+        Request req = Request_parse(&request_arena, request_data);
+        char *serialized = NULL;
+        int route = Routes_call(&request_arena, routes, &req, &serialized);
+        if (route == EXIT_SUCCESS) {
+            write(peer_fd, serialized, strlen(serialized));
+        } else if (route == NOT_FOUND) {
+            char *not_found =
+                Response_new_server_message(&request_arena, 404, "not found");
+            write(peer_fd, not_found, strlen(not_found));
+        } else if (route == EXIT_FAILURE) {
+            LOG_ERROR("failed to resolve route");
+            return;
+        }
     }
-    LOG_DEBUG("listening");
+
+    Arena_free(&request_arena);
+
+    if (close(peer_fd) == -1) {
+        LOG_PERROR("failed to close peer socket");
+    }
+}
+
+bool server_run = true;
+
+void shutdown_server(int sigio) { server_run = false; }
+
+int start_server(int sock_fd, Routes *routes) {
+    struct sigaction act = {};
+
+    act.sa_handler = shutdown_server;
+
+    sigaction(SIGINT, &act, 0);
+    sigaction(SIGTERM, &act, 0);
 
     struct sockaddr_in peer_addr;
     socklen_t peer_addr_size = sizeof(peer_addr);
 
+    ThreadPool *pool = ThreadPool_new(8);
+
+    fcntl(sock_fd, F_SETFL, O_NONBLOCK);
+
     for (;;) {
-        int peer_fd =
-            accept(sock_fd, (struct sockaddr *)&peer_addr, &peer_addr_size);
+        int peer_fd;
+        while (server_run) {
+            peer_fd =
+                accept(sock_fd, (struct sockaddr *)&peer_addr, &peer_addr_size);
+
+            if (peer_fd == -1) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    LOG_PERROR("failed to accept socket connection");
+                    break;
+                }
+            } else if (peer_fd > -1) {
+                break;
+            }
+        }
+        if (!server_run) {
+            LOG_INFO("kill requested -- exiting");
+            break;
+        }
         if (peer_fd == -1) {
             BAIL_PERROR("failed to connect to peer");
         }
-        LOG_DEBUG("accepted connection");
 
-        Arena request_arena = Arena_new(8192);
-        char *request_data = Arena_allocate(&request_arena, 1024);
-        read(peer_fd, request_data, 1024);
-        LOG_DEBUG("REQUEST:\n========\n%s\n========", request_data);
-        if (request_data[1023] != 0) {
-            LOG_WARNING("over 1kb of data in request, squashing it");
+        ServerTaskParams *params = malloc(sizeof(ServerTaskParams));
+        params->routes = routes;
+        params->peer_fd = peer_fd;
+        Task *task = malloc(sizeof(Task));
+        task->task = &server_task;
+        task->params = params;
 
-            char *too_long = Response_new_server_message(
-                &request_arena, 413,
-                "your request was too chunky. try an emulsifier.");
-            write(peer_fd, too_long, strlen(too_long));
-        } else {
-            Request req = Request_parse(&request_arena, request_data);
-            char *serialized = NULL;
-            int route = Routes_call(&request_arena, routes, &req, &serialized);
-            if (route == EXIT_SUCCESS) {
-                write(peer_fd, serialized, strlen(serialized));
-            } else if (route == NOT_FOUND) {
-                char *not_found = Response_new_server_message(&request_arena,
-                                                              404, "not found");
-                write(peer_fd, not_found, strlen(not_found));
-            } else if (route == EXIT_FAILURE) {
-                BAIL("failed to resolve route");
-            }
-        }
-
-        Arena_free(&request_arena);
-
-        if (close(peer_fd) == -1) {
-            BAIL_PERROR("failed to close peer socket");
-        }
+        ThreadPool_run(pool, task);
     }
+
+    ThreadPool_end(pool);
 
     return EXIT_SUCCESS;
 }
