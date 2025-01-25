@@ -9,7 +9,9 @@ A multithreaded server written from scratch in GNU C 23. It is completely ready 
     * Only HTTP/1.1 support
         * No bloated status messages with each response code
     * Example project is directly integrated into the `src/` directory, reducing filesystem footprint
+    * Code is uncommented -- lower filesystem footprint
 * Low probability of memory leaks and segmentation faults
+* No documentation inherently leads to security (by obscurity)
 
 ## Getting Started
 Run `./ez.sh` and figure it out. I don't have time for this.
