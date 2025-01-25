@@ -10,17 +10,17 @@ available commands:
         show this message.
     build [profile]:
         builds the project.
-        profile can be debug, release, or release-stripped. (leave empty for debug)
-        outputs to ./target.
+        profile should be debug, release, or release-stripped. (leave empty for debug)
+        outputs to ./target/
     run [profile]:
         builds and runs the project.
-        profile can be debug, release, or release-stripped. (leave empty for debug)
-        outputs to ./target.
+        profile should be debug, release, or release-stripped. (leave empty for debug)
+        outputs to ./target/
     debug [profile]:
         creates a debug build and launches valgrind + gdb.
-        profile can be debug, release, or release-stripped. (leave empty for debug)
+        can be any profile, but you should use ones with GDB-supported debug info: gdb, release-gdb
     clean:
-        cleans all artifacts. (removes ./target)"
+        cleans all artifacts. (removes ./target/)"
 }
 
 if [ -n "$1" ]; then
