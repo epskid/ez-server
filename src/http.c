@@ -1,4 +1,3 @@
-#pragma once
 #include "ez.c"
 #include <ctype.h>
 #include <regex.h>

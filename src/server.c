@@ -1,4 +1,3 @@
-#pragma once
 #include "ez.c"
 #include "http.c"
 #include <arpa/inet.h>
@@ -65,30 +64,13 @@ void Router_add(Router *router, Method method, char *path,
             realloc(router->routes, (router->routes_len + 1) * sizeof(Route));
     }
 
-    size_t nmatches = string_count(path, ':');
     memcpy(&router->routes[router->routes_len],
-           &(Route){.method = method,
-                    .path = path,
-                    .nmatches = nmatches,
-                    .route = route},
+           &(Route){.method = method, .path = path, .route = route},
            sizeof(Route));
 
-    char **names = malloc(nmatches * sizeof(char *));
-    char *names_only = strdup(path);
-    char *looking_at = names_only;
-    size_t name = 0;
-    while ((looking_at = strchr(looking_at, ':')) != NULL) {
-        names[name] = looking_at + 1;
-        name++;
-
-        char *lparen = strchr(looking_at, '(');
-        *lparen = 0;
-        looking_at = lparen + 1;
-    }
-    router->routes[router->routes_len].param_names_data = names_only;
-    router->routes[router->routes_len].param_names = names;
     char *regex_pattern = strdup(path);
-    looking_at = regex_pattern;
+    char *looking_at = regex_pattern;
+    size_t nmatches = 0;
     while ((looking_at = strchr(looking_at + 1, ':')) != NULL) {
         char *regex_start = strchr(looking_at, '(');
         memmove(looking_at, regex_start, strlen(regex_start) + 1);
@@ -103,8 +85,36 @@ void Router_add(Router *router, Method method, char *path,
             regex_end++;
         }
         looking_at = regex_end;
+
+        nmatches++;
     }
+    router->routes[router->routes_len].nmatches = nmatches;
     router->routes[router->routes_len].regex_pattern = regex_pattern;
+
+    char **names = malloc(nmatches * sizeof(char *));
+    char *names_only = strdup(path);
+    looking_at = names_only;
+    size_t name = 0;
+    while ((looking_at = strchr(looking_at, ':')) != NULL) {
+        names[name] = looking_at + 1;
+        name++;
+
+        char *lparen = strchr(looking_at, '(');
+        *lparen = 0;
+        int depth = 1;
+        char *regex_end = looking_at + 1;
+        while (depth > 0) {
+            if (*regex_end == '(')
+                depth++;
+            if (*regex_end == ')')
+                depth--;
+
+            regex_end++;
+        }
+        looking_at = regex_end;
+    }
+    router->routes[router->routes_len].param_names_data = names_only;
+    router->routes[router->routes_len].param_names = names;
 
     router->routes_len++;
 }
@@ -278,6 +288,41 @@ int start_server(int sock_fd, Router *router) {
     }
 
     ThreadPool_end(pool);
+
+    return EXIT_SUCCESS;
+}
+
+int start_server_easy(char *in_addr, short port, Router *router) {
+    int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock_fd == -1) {
+        LOG_FATAL_PERROR("failed to create socket");
+    }
+
+    if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) ==
+        -1)
+        LOG_PERROR("failed to set socket reuse adress, %d", errno);
+
+    struct sockaddr_in bind_address = {.sin_family = AF_INET,
+                                       .sin_port = htons(port)};
+    inet_pton(AF_INET, in_addr, &bind_address.sin_addr);
+    if (bind(sock_fd, (struct sockaddr *)&bind_address, sizeof(bind_address)) ==
+        -1) {
+        LOG_FATAL_PERROR("failed to bind to socket");
+    }
+
+    if (listen(sock_fd, 16) == -1) {
+        BAIL_PERROR("failed to listen to socket");
+    }
+
+    if (start_server(sock_fd, router) == -1) {
+        LOG_WARNING("shutting down due to previous error(s)");
+    }
+
+    Router_free(router);
+
+    if (close(sock_fd) == -1) {
+        LOG_FATAL_PERROR("failed to close socket");
+    }
 
     return EXIT_SUCCESS;
 }

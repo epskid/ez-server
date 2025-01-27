@@ -1,2 +1,2 @@
 CompileFlags:
-  Add: [-xc, -xc-header, -std=gnu23, -Wpedantic]
+  Add: [-xc, -xc-header, -std=gnu23, -Wpedantic, -Wall]

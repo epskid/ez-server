@@ -64,7 +64,7 @@ int Log_initialize(LogLevel level, FILE *out) {
 #define LOG_FATAL_PERROR(input, ...)                                           \
     if (__ez_log.level >= LOG_LEVEL_ERROR)                                     \
         lfprintf(__ez_log.out,                                                 \
-                 "[FATAL ERROR] " input "%s\n" __VA_OPT__(, ) __VA_ARGS__,     \
+                 "[FATAL ERROR] " input ": %s\n" __VA_OPT__(, ) __VA_ARGS__,   \
                  strerror(errno));                                             \
     exit(EXIT_FAILURE);
 #define LOG_WARNING(input, ...)                                                \
@@ -87,7 +87,7 @@ int Log_initialize(LogLevel level, FILE *out) {
 #define BAIL_PERROR(input, ...)                                                \
     if (__ez_log.level >= LOG_LEVEL_ERROR)                                     \
         lfprintf(__ez_log.out,                                                 \
-                 "[ERROR] " input "%s\n" __VA_OPT__(, ) __VA_ARGS__,           \
+                 "[ERROR] " input ": %s\n" __VA_OPT__(, ) __VA_ARGS__,         \
                  strerror(errno));                                             \
     return EXIT_FAILURE;
 
@@ -245,17 +245,4 @@ void ThreadPool_end(ThreadPool *pool) {
     free(pool->threads);
     free(pool->channels);
     free(pool);
-}
-
-size_t string_count(char *string, char to_count) {
-    char *looking_at = string;
-    size_t occurences = 0;
-
-    if (*string == to_count)
-        occurences++;
-
-    while ((looking_at = strchr(looking_at + 1, to_count)) != NULL)
-        occurences++;
-
-    return occurences;
 }

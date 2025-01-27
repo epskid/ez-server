@@ -66,7 +66,7 @@ case $subcommand in
             mkdir target
         fi
 
-        output="./target/$( basename -- "$(dirname -- "$(readlink -f -- "$0")")" )$1"
+        output="./target/$(basename -- "$(dirname -- "$(readlink -f -- "$0")")" )$1"
 
         IFS=' ' clang $extras -std=gnu23 -Wpedantic -Wall -Werror src/main.c -o $output
         clang_result=$?
