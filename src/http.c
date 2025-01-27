@@ -18,6 +18,27 @@ typedef struct {
     size_t headers_len;
 } Headers;
 
+Headers *Headers_new(Arena *arena) {
+    Headers *headers = Arena_allocate(arena, sizeof(Headers));
+    headers->headers = Arena_allocate(arena, sizeof(Header));
+    headers->headers_len = 0;
+
+    return headers;
+}
+
+void Headers_add(Arena *arena, Headers *headers, char *key, char *value) {
+    if (headers->headers_len > 0) {
+        headers->headers = Arena_reallocate(
+            arena, headers->headers, headers->headers_len * sizeof(Header),
+            (headers->headers_len + 1) * sizeof(Header));
+    }
+    Header *new_header = &headers->headers[headers->headers_len];
+    new_header->key = Arena_strdup(arena, key);
+    new_header->value = Arena_strdup(arena, value);
+
+    headers->headers_len++;
+}
+
 Header *Headers_get(Headers *headers, char *key) {
     for (size_t i = 0; i < headers->headers_len; i++) {
         if (strcasecmp(headers->headers[i].key, key)) {
@@ -64,7 +85,7 @@ Queries Queries_parse(Arena *arena, char *queries_string) {
         return queries;
     }
 
-    char *raw_queries = Arena_allocate(arena, strlen(queries_string) + 1);
+    char *raw_queries = Arena_strdup(arena, queries_string);
     strcpy(raw_queries, queries_string);
     queries.queries = Arena_allocate(arena, QUERY_MAX * sizeof(Query));
     queries.queries_len = 0;
@@ -94,6 +115,7 @@ typedef struct {
     char *raw_url;
     char *raw_decoded_url;
     char *path;
+    regmatch_t *matches;
     Queries queries;
 } Url;
 
@@ -101,7 +123,7 @@ Url Url_parse(Arena *arena, char *url_data) {
     Url url;
 
     url.raw_url = url_data;
-    url.raw_decoded_url = Arena_allocate(arena, strlen(url_data) + 1);
+    url.raw_decoded_url = Arena_strdup(arena, url_data);
     strcpy(url.raw_decoded_url, url_data);
 
     char *query_location = strchr(url.raw_decoded_url, '?');
@@ -126,7 +148,7 @@ Url Url_parse(Arena *arena, char *url_data) {
     }
 
     if (query_location != NULL) {
-        url.path = Arena_allocate(arena, strlen(url.raw_decoded_url) + 1);
+        url.path = Arena_strdup(arena, url.raw_decoded_url);
         strcpy(url.path, url.raw_decoded_url);
         url.path[query_location - url.raw_decoded_url] = 0;
         url.queries = Queries_parse(
@@ -145,10 +167,10 @@ typedef struct {
     Headers headers;
     Url url;
     char *body;
-} Request;
+} RawRequest;
 
-Request Request_parse(Arena *request_arena, char *raw_request) {
-    Request request;
+RawRequest Request_parse(Arena *request_arena, char *raw_request) {
+    RawRequest request;
     request.raw_request = raw_request;
 
     char *line_save;
@@ -197,17 +219,30 @@ Request Request_parse(Arena *request_arena, char *raw_request) {
 
 typedef struct {
     uint16_t status;
-    Headers headers;
+    Headers *headers;
     char *body;
 } Response;
+
+Response *Response_new(Arena *arena) {
+    Response *resp = Arena_allocate(arena, sizeof(Response));
+    resp->status = 0;
+    resp->headers = Headers_new(arena);
+    resp->body = NULL;
+
+    return resp;
+}
+
+void Response_set_body(Arena *arena, Response *response, char *body) {
+    response->body = Arena_strdup(arena, body);
+}
 
 char *Response_serialize(Arena *arena, Response *response) {
     char *response_data = Arena_allocate(arena, 1024);
 
     sprintf(response_data, "HTTP/1.1 %d 2ez4me\r\n", response->status);
 
-    for (size_t i = 0; i < response->headers.headers_len; i++) {
-        Header header = response->headers.headers[i];
+    for (size_t i = 0; i < response->headers->headers_len; i++) {
+        Header header = response->headers->headers[i];
         sprintf(response_data + strlen(response_data), "%s: %s\r\n", header.key,
                 header.value);
     }
@@ -224,15 +259,12 @@ char *Response_serialize(Arena *arena, Response *response) {
 
 char *Response_new_server_message(Arena *arena, uint16_t status,
                                   char *message) {
-    Response resp = {
-        .status = status,
-        .headers =
-            (Headers){.headers = (Header[]){{"Content-Type", "text/html"}},
-                      .headers_len = 1},
-        .body = Arena_allocate(arena, 128 * sizeof(char)),
-    };
+    Response *resp = Response_new(arena);
+    resp->status = status;
+    Headers_add(arena, resp->headers, "content-type", "text/html");
+    resp->body = Arena_allocate(arena, 128);
 
-    sprintf(resp.body, "<h1>ez-server</h1><hr/><p>%s</p>", message);
+    sprintf(resp->body, "<h1>ez-server</h1><hr/><p>%s</p>", message);
 
-    return Response_serialize(arena, &resp);
+    return Response_serialize(arena, resp);
 }

@@ -11,28 +11,36 @@
 #include <string.h>
 #include <unistd.h>
 
-typedef char *(*RouteFunction)(Arena *, Request *, regmatch_t *);
+typedef struct {
+    RawRequest *raw;
+    char *param_data;
+    char **param_names;
+    regmatch_t *params;
+    size_t nmatches;
+} Request;
 
-#define ROUTE(name, ...)                                                       \
-    char *Route_##name(Arena *arena, Request *request, regmatch_t *matches) {  \
-        Response response;                                                     \
-        __VA_ARGS__                                                            \
-        return Response_serialize(arena, &response);                           \
+char *Request_get_param(Request *req, char *key) {
+    for (size_t i = 0; i < req->nmatches; i++) {
+        if (strcmp(req->param_names[i], key) == 0) {
+            regmatch_t match = req->params[i + 1];
+            char *param = req->param_data + match.rm_so;
+            req->param_data[match.rm_eo] = 0;
+
+            return param;
+        }
     }
-#define HEADERS(...)                                                           \
-    (Headers) {                                                                \
-        .headers = (Header[])__VA_ARGS__,                                      \
-        .headers_len = sizeof((Header[])__VA_ARGS__) / sizeof(Header)          \
-    }
-#define ROUTES(...)                                                            \
-    (Routes) {                                                                 \
-        .routes = (Route[])__VA_ARGS__,                                        \
-        .routes_len = sizeof((Route[])__VA_ARGS__) / sizeof(Route)             \
-    }
+
+    return NULL;
+}
+
+typedef void (*RouteFunction)(Arena *, Request *, Response *);
 
 typedef struct {
     Method method;
     char *path;
+    char *regex_pattern;
+    char *param_names_data;
+    char **param_names;
     size_t nmatches;
     RouteFunction route;
 } Route;
@@ -40,43 +48,128 @@ typedef struct {
 typedef struct {
     Route *routes;
     size_t routes_len;
-} Routes;
+} Router;
+
+Router *Router_new() {
+    Router *router = malloc(sizeof(Router));
+    router->routes = malloc(sizeof(Route));
+    router->routes_len = 0;
+
+    return router;
+}
+
+void Router_add(Router *router, Method method, char *path,
+                RouteFunction route) {
+    if (router->routes_len > 0) {
+        router->routes =
+            realloc(router->routes, (router->routes_len + 1) * sizeof(Route));
+    }
+
+    size_t nmatches = string_count(path, ':');
+    memcpy(&router->routes[router->routes_len],
+           &(Route){.method = method,
+                    .path = path,
+                    .nmatches = nmatches,
+                    .route = route},
+           sizeof(Route));
+
+    char **names = malloc(nmatches * sizeof(char *));
+    char *names_only = strdup(path);
+    char *looking_at = names_only;
+    size_t name = 0;
+    while ((looking_at = strchr(looking_at, ':')) != NULL) {
+        names[name] = looking_at + 1;
+        name++;
+
+        char *lparen = strchr(looking_at, '(');
+        *lparen = 0;
+        looking_at = lparen + 1;
+    }
+    router->routes[router->routes_len].param_names_data = names_only;
+    router->routes[router->routes_len].param_names = names;
+    char *regex_pattern = strdup(path);
+    looking_at = regex_pattern;
+    while ((looking_at = strchr(looking_at + 1, ':')) != NULL) {
+        char *regex_start = strchr(looking_at, '(');
+        memmove(looking_at, regex_start, strlen(regex_start) + 1);
+        int depth = 1;
+        char *regex_end = looking_at + 1;
+        while (depth > 0) {
+            if (*regex_end == '(')
+                depth++;
+            if (*regex_end == ')')
+                depth--;
+
+            regex_end++;
+        }
+        looking_at = regex_end;
+    }
+    router->routes[router->routes_len].regex_pattern = regex_pattern;
+
+    router->routes_len++;
+}
+
+void Router_free(Router *router) {
+    for (size_t i = 0; i < router->routes_len; i++) {
+        free(router->routes[i].param_names);
+        free(router->routes[i].param_names_data);
+        free(router->routes[i].regex_pattern);
+    }
+
+    free(router->routes);
+    free(router);
+}
 
 #define NOT_FOUND 1
 
-int Routes_call(Arena *arena, Routes *routes, Request *req, char **response) {
-    for (size_t i = 0; i < routes->routes_len; i++) {
-        Route route = routes->routes[i];
+int Router_call(Arena *arena, Router *router, RawRequest *req,
+                char **response_data) {
+    for (size_t i = 0; i < router->routes_len; i++) {
+        Route route = router->routes[i];
 
         if (route.method == req->method) {
             if (route.nmatches > 0) {
                 regex_t re;
                 int errcode;
 
-                if ((errcode = regcomp(&re, route.path, 0)) != 0) {
+                if ((errcode = regcomp(&re, route.regex_pattern,
+                                       REG_EXTENDED)) != 0) {
                     char *errbuf = Arena_allocate(arena, 64);
                     regerror(errcode, &re, errbuf, 64);
                     BAIL("error compiling regex: %s", errbuf);
                 }
 
-                regmatch_t *matches =
-                    Arena_allocate(arena, route.nmatches * sizeof(regmatch_t));
+                regmatch_t *matches = Arena_allocate(
+                    arena, (route.nmatches + 1) * sizeof(regmatch_t));
                 int match_result =
-                    regexec(&re, req->url.path, route.nmatches, matches, 0);
-                regfree(&re);
+                    regexec(&re, req->url.path, route.nmatches + 1, matches, 0);
                 if (match_result == 0) {
-                    route.route(arena, req, matches);
+                    Request matched_req = {
+                        .raw = req,
+                        .param_data = Arena_strdup(arena, req->url.path),
+                        .param_names = route.param_names,
+                        .params = matches,
+                        .nmatches = route.nmatches,
+                    };
+                    Response *response = Response_new(arena);
+                    route.route(arena, &matched_req, response);
+                    *response_data = Response_serialize(arena, response);
+                    regfree(&re);
                     return EXIT_SUCCESS;
                 } else if (match_result == REG_NOMATCH) {
+                    regfree(&re);
                     continue;
                 } else {
                     char *errbuf = Arena_allocate(arena, 64);
                     regerror(errcode, &re, errbuf, 64);
+                    regfree(&re);
                     BAIL("error while pattern matching path: %s", errbuf);
                 }
             } else {
                 if (strcmp(route.path, req->url.path) == 0) {
-                    *response = route.route(arena, req, NULL);
+                    Response *response = Response_new(arena);
+                    route.route(arena, &(Request){.raw = req}, response);
+                    *response_data = Response_serialize(arena, response);
                     return EXIT_SUCCESS;
                 }
             }
@@ -87,13 +180,13 @@ int Routes_call(Arena *arena, Routes *routes, Request *req, char **response) {
 }
 
 typedef struct {
-    Routes *routes;
+    Router *routes;
     int peer_fd;
 } ServerTaskParams;
 
 void server_task(void *params) {
     ServerTaskParams *st_params = params;
-    Routes *routes = st_params->routes;
+    Router *routes = st_params->routes;
     int peer_fd = st_params->peer_fd;
 
     Arena request_arena = Arena_new(8192);
@@ -108,9 +201,9 @@ void server_task(void *params) {
             "your request was too chunky. try an emulsifier.");
         write(peer_fd, too_long, strlen(too_long));
     } else {
-        Request req = Request_parse(&request_arena, request_data);
+        RawRequest req = Request_parse(&request_arena, request_data);
         char *serialized = NULL;
-        int route = Routes_call(&request_arena, routes, &req, &serialized);
+        int route = Router_call(&request_arena, routes, &req, &serialized);
         if (route == EXIT_SUCCESS) {
             write(peer_fd, serialized, strlen(serialized));
         } else if (route == NOT_FOUND) {
@@ -134,7 +227,9 @@ bool server_run = true;
 
 void shutdown_server(int sigio) { server_run = false; }
 
-int start_server(int sock_fd, Routes *routes) {
+int start_server(int sock_fd, Router *router) {
+    LOG_INFO("server started");
+
     struct sigaction act = {};
 
     act.sa_handler = shutdown_server;
@@ -173,7 +268,7 @@ int start_server(int sock_fd, Routes *routes) {
         }
 
         ServerTaskParams *params = malloc(sizeof(ServerTaskParams));
-        params->routes = routes;
+        params->routes = router;
         params->peer_fd = peer_fd;
         Task *task = malloc(sizeof(Task));
         task->task = &server_task;

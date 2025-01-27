@@ -122,6 +122,31 @@ void *Arena_allocate(Arena *arena, size_t requested_amount) {
     return allocated;
 }
 
+void *Arena_reallocate(Arena *arena, void *allocated, size_t old_amount,
+                       size_t requested_amount) {
+    if (old_amount == requested_amount) {
+        return arena;
+    }
+
+    if ((char *)allocated + old_amount ==
+        (char *)arena->memory + arena->next_offset) {
+        arena->next_offset += requested_amount;
+        return allocated;
+    }
+
+    void *new_allocated = Arena_allocate(arena, requested_amount);
+    memcpy(new_allocated, allocated, old_amount);
+
+    return new_allocated;
+}
+
+void *Arena_strdup(Arena *arena, char *str) {
+    char *new_str = Arena_allocate(arena, strlen(str) + 1);
+    strcpy(new_str, str);
+
+    return new_str;
+}
+
 void Arena_free(Arena *arena) {
     free(arena->memory);
     arena->memory = NULL;
@@ -220,4 +245,17 @@ void ThreadPool_end(ThreadPool *pool) {
     free(pool->threads);
     free(pool->channels);
     free(pool);
+}
+
+size_t string_count(char *string, char to_count) {
+    char *looking_at = string;
+    size_t occurences = 0;
+
+    if (*string == to_count)
+        occurences++;
+
+    while ((looking_at = strchr(looking_at + 1, to_count)) != NULL)
+        occurences++;
+
+    return occurences;
 }
